@@ -163,6 +163,21 @@ def generar_excel(df_colisiones: pd.DataFrame) -> bytes:
 # LÓGICA — GENERADOR DE SKUs
 # ─────────────────────────────────────────────────────────────────────────────
 
+CATALOGO_TALLAS: dict[int, str] = {
+    0:  "2",
+    1:  "4",
+    2:  "6",
+    3:  "8",
+    4:  "10",
+    5:  "12",
+    6:  "CH",
+    7:  "M",
+    8:  "G",
+    9:  "XL",
+    10: "XXL",
+    11: "XXXL",
+}
+
 CATALOGO_COLORES: dict[int, str] = {
     1:  "NEGRO",        2:  "MARINO",       3:  "MORADO",
     4:  "AZUL PETROLEO",5:  "VINO",         6:  "V. MILITAR",
@@ -178,20 +193,20 @@ def generar_skus(
     modelo: int,
     colores: list[int],
     variantes: list[int],
-    talla_min: int = 1,
-    talla_max: int = 12,
+    tallas: list[int],
 ) -> list[dict]:
     """
-    Genera permutaciones: Variante → Color (orden numérico) → Talla.
+    Genera permutaciones: Variante → Color (orden numérico) → Talla (orden numérico).
     Devuelve lista de dicts con 'codigo' y 'descripcion'.
     """
     filas = []
     for var in sorted(variantes):
         for col in sorted(colores):
             nombre_color = CATALOGO_COLORES.get(col, f"COLOR {col:02d}")
-            for talla in range(talla_min, talla_max + 1):
-                codigo = f"{modelo:03d}{talla:02d}{col:02d}{var:02d}"
-                desc   = f"Modelo {modelo:03d} - Talla {talla:02d} - {nombre_color} - Var {var:02d}"
+            for talla_cod in sorted(tallas):
+                nombre_talla = CATALOGO_TALLAS.get(talla_cod, f"{talla_cod:02d}")
+                codigo = f"{modelo:03d}{talla_cod:02d}{col:02d}{var:02d}"
+                desc   = f"Modelo {modelo:03d} - Talla {nombre_talla} - {nombre_color} - Var {var:02d}"
                 filas.append({"Código": codigo, "Descripción": desc})
     return filas
 
@@ -247,27 +262,37 @@ def pagina_generador():
 
         # ── Paso 1: Modelo ────────────────────────────────────────────────────
         st.subheader("Paso 1 — Modelo")
-        col_mod, col_tallas = st.columns([1, 2])
-        with col_mod:
-            modelo_str = st.text_input(
-                "Número de modelo (3 dígitos)",
-                placeholder="Ej: 121",
-                max_chars=3,
-                key="sku_modelo",
-            )
-        with col_tallas:
-            talla_min, talla_max = st.select_slider(
-                "Rango de tallas",
-                options=list(range(1, 25)),
-                value=(1, 12),
-                format_func=lambda x: f"{x:02d}",
-                key="sku_tallas",
-            )
+        modelo_str = st.text_input(
+            "Número de modelo (3 dígitos)",
+            placeholder="Ej: 121",
+            max_chars=3,
+            key="sku_modelo",
+        )
 
         st.divider()
 
-        # ── Paso 2: Colores ───────────────────────────────────────────────────
-        st.subheader("Paso 2 — Colores fabricados")
+        # ── Paso 1b: Tallas ───────────────────────────────────────────────────
+        st.subheader("Paso 2 — Tallas")
+        st.caption("Selecciona las tallas en que se produce este modelo.")
+
+        opciones_talla = [
+            f"{cod:02d} — Talla {nombre}"
+            for cod, nombre in CATALOGO_TALLAS.items()
+        ]
+        todas_tallas = st.checkbox("Seleccionar todas las tallas", value=True, key="sku_todas_tallas")
+        seleccion_tallas = st.multiselect(
+            "Tallas disponibles",
+            options=opciones_talla,
+            default=opciones_talla if todas_tallas else [],
+            placeholder="Selecciona una o más tallas...",
+            key="sku_tallas",
+        )
+        tallas_num = [int(t.split(" — ")[0]) for t in seleccion_tallas]
+
+        st.divider()
+
+        # ── Paso 3: Colores ───────────────────────────────────────────────────
+        st.subheader("Paso 3 — Colores fabricados")
         st.caption("Selecciona solo los colores en que se produce este modelo.")
 
         opciones_color = [
@@ -284,8 +309,8 @@ def pagina_generador():
 
         st.divider()
 
-        # ── Paso 3: Variantes ─────────────────────────────────────────────────
-        st.subheader("Paso 3 — Variantes / Escotes")
+        # ── Paso 4: Variantes ─────────────────────────────────────────────────
+        st.subheader("Paso 4 — Variantes / Escotes")
         variantes_str = st.text_input(
             "Variantes (separadas por coma)",
             value="01",
@@ -301,6 +326,8 @@ def pagina_generador():
             errores = []
             if not modelo_str or not modelo_str.isdigit():
                 errores.append("El modelo debe ser un número de hasta 3 dígitos.")
+            if not tallas_num:
+                errores.append("Selecciona al menos una talla.")
             if not colores_num:
                 errores.append("Selecciona al menos un color.")
 
@@ -317,17 +344,17 @@ def pagina_generador():
                     st.error(e)
             else:
                 modelo_int = int(modelo_str)
-                filas = generar_skus(modelo_int, colores_num, variantes_num, talla_min, talla_max)
+                filas = generar_skus(modelo_int, colores_num, variantes_num, tallas_num)
                 df_result = pd.DataFrame(filas)
 
                 st.success(f"Se generaron **{len(df_result)}** códigos.")
 
                 # Métricas
                 c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Total SKUs",    len(df_result))
-                c2.metric("Colores",       len(colores_num))
-                c3.metric("Variantes",     len(variantes_num))
-                c4.metric("Tallas",        talla_max - talla_min + 1)
+                c1.metric("Total códigos", len(df_result))
+                c2.metric("Tallas",        len(tallas_num))
+                c3.metric("Colores",       len(colores_num))
+                c4.metric("Variantes",     len(variantes_num))
 
                 st.divider()
 
